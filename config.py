@@ -4,8 +4,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AppMetadata:
     name: str = "往来占用统计分析系统"
-    version: str = "v2.0.6"
-    version_date: str = "2026-07-28"
+    version: str = "v2.0.7"
+    version_date: str = "2026-08-09"
 
 
 @dataclass(frozen=True)

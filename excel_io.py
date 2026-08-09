@@ -111,7 +111,7 @@ class ExcelRepository:
         for index, (sheet_name, _) in enumerate(sheets, start=1):
             progress_callback(50 + int(index / total * 45), f"正在写入: {sheet_name}", "写入数据阶段")
         if make_excel:
-            make_excel(sheets, output_path, theme="deep-navy")
+            make_excel(sheets, output_path)
         else:
             # 回退：make_excel 不可用时用裸 to_excel
             import pandas as _pd

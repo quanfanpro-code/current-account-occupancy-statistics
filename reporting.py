@@ -4,7 +4,6 @@ import gc
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
 import pandas as pd
 
 from .config import ColumnNames, EXCEL_MAX_ROWS, ReportNames, ZERO_THRESHOLD
@@ -145,15 +144,3 @@ class ReportBuilder:
             detail_occupied=detail_occupied,
             detail_occupying=detail_occupying,
         )
-
-    def build_from_balance(self, df_balance, new_suppliers):
-        noop = lambda *_args, **_kwargs: None
-        bundle = self.build_bundle(df_balance, [column for column in df_balance.columns[1:]], new_suppliers, noop)
-        return {
-            "balance": bundle.balance,
-            "summary": bundle.summary,
-            "stats_occupied": bundle.stats_occupied,
-            "stats_occupying": bundle.stats_occupying,
-            "detail_occupied": bundle.detail_occupied,
-            "detail_occupying": bundle.detail_occupying,
-        }

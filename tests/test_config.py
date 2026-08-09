@@ -19,5 +19,5 @@ def test_config_is_valid_utf8_and_importable():
 
 def test_version_is_current():
     """版本号与 README 头部保持一致"""
-    assert AppMetadata().version == "v2.0.6"
-    assert AppMetadata().version_date == "2026-07-28"
+    assert AppMetadata().version == "v2.0.7"
+    assert AppMetadata().version_date == "2026-08-09"

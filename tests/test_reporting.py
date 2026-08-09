@@ -5,8 +5,8 @@ from 往来占用统计.reporting import ReportBuilder
 
 def test_duplicate_date_and_unit_name_is_handled():
     df = pd.DataFrame({"往来单位": pd.to_datetime(["2025-01-01"]), "单位A": [100000000]})
-    report = ReportBuilder().build_from_balance(df, new_suppliers=[])
-    assert "summary" in report
+    report = ReportBuilder().build_bundle(df, ["单位A"], [], lambda *_args: None)
+    assert not report.summary.empty
 
 
 def test_new_supplier_note_is_present():

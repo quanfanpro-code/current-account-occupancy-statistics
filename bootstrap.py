@@ -17,7 +17,6 @@ def check_dependencies(skip_install: bool = False, auto_install: bool = True) ->
     required = {
         "pandas": "pandas",
         "openpyxl": "openpyxl",
-        "xlsxwriter": "xlsxwriter",
     }
     missing = [package for module, package in required.items() if importlib.util.find_spec(module) is None]
     installed_now: list[str] = []
