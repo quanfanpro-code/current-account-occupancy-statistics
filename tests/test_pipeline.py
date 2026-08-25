@@ -123,3 +123,60 @@ def test_transactions_before_initial_date_are_dropped_with_warning():
     assert list(result["单位A"])[0] == 100000000
     assert list(result["单位A"])[-1] == 103000000
     assert any("早于期初日期" in m for m in messages)
+
+
+def test_no_balance_table_uses_trans_dates_and_zero_initial():
+    """不提供期初余额表：期初按 0，起止日期取序时账首尾日期"""
+    from 往来占用统计.models import ProcessConfig
+
+    trans = pd.DataFrame(
+        {
+            "单位名称": ["单位A", "单位A", "单位B"],
+            "借方金额": [500, 300, 200],
+            "贷方金额": [0, 0, 0],
+            "日期": ["2025-01-02", "2025-01-05", "2025-01-03"],
+        }
+    )
+    pipeline = FinancePipeline()
+    config = ProcessConfig("", "", "", "", "", "单位名称", "借方金额", "贷方金额", "日期")
+    pb, pt = pipeline.preprocess_data(None, trans, config, lambda *a: None)
+    assert pb is None
+    result, supplier_columns, new_suppliers = pipeline.calculate_balances(pb, pt, config, lambda *a: None)
+
+    # 日期从 01-02（第一笔）到 01-05（最后一笔），共 4 天
+    assert len(result) == 4
+    assert list(result.columns) == ["日期", "单位A", "单位B"]
+    # 单位A：01-02 +500，01-05 +300
+    assert list(result["单位A"]) == [5000000, 5000000, 5000000, 8000000]
+    # 单位B：01-03 +200
+    assert list(result["单位B"]) == [0, 2000000, 2000000, 2000000]
+    assert supplier_columns == []
+    assert sorted(new_suppliers) == ["单位A", "单位B"]
+
+
+def test_account_filter_keeps_only_current_accounts():
+    """双重筛选：既要有往来单位明细，又要是八大往来科目（按前缀匹配，兼容科目编码和完整路径）"""
+    from 往来占用统计.models import ProcessConfig
+
+    trans = pd.DataFrame(
+        {
+            "单位名称": ["单位A", "单位A", "单位B", "单位C", "", "单位D"],
+            "借方金额": [500, 300, 200, 999, 100, 400],
+            "贷方金额": [0, 0, 0, 0, 0, 0],
+            "日期": ["2025-01-02", "2025-01-03", "2025-01-03", "2025-01-03", "2025-01-03", "2025-01-04"],
+            "科目名称": ["1122 应收账款", "应收账款\\某客户", "2205 合同负债", "6601 管理费用", "1122 应收账款", "其他应付款"],
+        }
+    )
+    messages = []
+    pipeline = FinancePipeline()
+    # 不指定科目列，验证程序自动识别“科目名称”列并完成双重筛选
+    config = ProcessConfig("", "", "", "", "", "单位名称", "借方金额", "贷方金额", "日期")
+    pb, pt = pipeline.preprocess_data(None, trans, config, lambda p, m, ph=None: messages.append(m))
+
+    # 往来单位为空的 1 条 + 管理费用 1 条被忽略，保留 4 条往来科目记录
+    assert len(pt) == 4
+    assert any("无往来单位明细" in m and "1 条" in m for m in messages)
+    assert any("忽略非往来科目 1 条" in m for m in messages)
+    result, _, new_suppliers = pipeline.calculate_balances(pb, pt, config, lambda *a: None)
+    assert "单位C" not in result.columns
+    assert sorted(new_suppliers) == ["单位A", "单位B", "单位D"]

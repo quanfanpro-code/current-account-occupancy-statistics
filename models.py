@@ -17,13 +17,14 @@ class ProcessConfig:
     col_debit: str
     col_credit: str
     col_date: str
+    # 可选：序时账“科目”列，选了之后只保留往来科目（应收账款等）的记录
+    col_account: str = ""
 
     def validate(self) -> None:
+        # 期初余额表可选：不填则所有单位期初余额按 0 处理
         required = {
             "trans_file": self.trans_file,
             "trans_sheet": self.trans_sheet,
-            "balance_file": self.balance_file,
-            "balance_sheet": self.balance_sheet,
             "col_name": self.col_name,
             "col_debit": self.col_debit,
             "col_credit": self.col_credit,
@@ -33,6 +34,8 @@ class ProcessConfig:
         if missing:
             joined = ", ".join(missing)
             raise ValueError(f"以下配置缺失: {joined}")
+        if self.balance_file and not self.balance_sheet:
+            raise ValueError("已选择期初余额表文件，但未选择 Sheet")
         # 校验列映射不能重复（如借方和贷方映射到同一列）
         col_mappings = [
             ("往来单位", self.col_name),
@@ -40,6 +43,8 @@ class ProcessConfig:
             ("贷方发生额", self.col_credit),
             ("记账日期", self.col_date),
         ]
+        if self.col_account:
+            col_mappings.append(("科目筛选", self.col_account))
         seen: dict[str, str] = {}
         for label, col_name in col_mappings:
             if col_name in seen:
@@ -50,9 +55,10 @@ class ProcessConfig:
             seen[col_name] = label
 
     def build_output_path(self) -> str:
-        balance_path = Path(self.balance_file)
+        # 未提供余额表时用序时账文件名生成输出文件名
+        source_path = Path(self.balance_file or self.trans_file)
         output_dir = Path(self.output_dir)
-        return str(output_dir / f"{balance_path.stem}数据已整理{balance_path.suffix}")
+        return str(output_dir / f"{source_path.stem}数据已整理{source_path.suffix}")
 
 
 @dataclass

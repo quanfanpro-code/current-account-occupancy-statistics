@@ -33,3 +33,28 @@ class ReportNames:
 
 EXCEL_MAX_ROWS = 1048575
 ZERO_THRESHOLD = 1e-9
+
+# 往来科目关键字：序时账“科目”列开头与其中任意一个一致，即视为往来科目参与计算
+CURRENT_ACCOUNT_KEYWORDS = (
+    "应收账款",
+    "预付账款",
+    "其他应收款",
+    "应付账款",
+    "预收账款",
+    "其他应付款",
+    "合同资产",
+    "合同负债",
+)
+
+# 科目列自动识别的优先级：有一级科目看一级科目，没有再看科目名称
+ACCOUNT_COLUMN_CANDIDATES = ("一级科目", "科目名称", "科目")
+
+
+def detect_account_column(columns) -> str:
+    """在序时账列名中自动寻找科目列，找不到返回空字符串"""
+    columns = [str(col) for col in columns]
+    for keyword in ACCOUNT_COLUMN_CANDIDATES:
+        for col in columns:
+            if keyword in col:
+                return col
+    return ""

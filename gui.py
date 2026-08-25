@@ -158,7 +158,7 @@ class FinanceView:
             ctk.CTkLabel(card, text="数据导入", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=15, pady=(8, 4))
 
         self._build_file_row(card, "发生额序时账", self.trans_path_var, self.trans_sheet_var, "trans")
-        self._build_file_row(card, "期初余额表", self.balance_path_var, self.balance_sheet_var, "balance")
+        self._build_file_row(card, "期初余额表(可选)", self.balance_path_var, self.balance_sheet_var, "balance")
 
     def _build_file_row(self, parent, label_text, path_var, sheet_var, file_type) -> None:
         """一行：标签 + 路径框 + 浏览按钮 + Sheet选择"""
@@ -400,7 +400,8 @@ class FinanceView:
         config.validate()
         for field_name in ["trans_file", "balance_file"]:
             file_path = getattr(config, field_name)
-            if not os.path.isfile(file_path):
+            # 期初余额表可选，留空时跳过存在性检查
+            if file_path and not os.path.isfile(file_path):
                 raise ValueError(f"文件不存在: {file_path}")
         return config
 

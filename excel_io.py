@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .config import detect_account_column
 from .models import ProcessConfig
 
 try:
@@ -68,30 +69,47 @@ class ExcelRepository:
                 workbook.close()
         return list(pd.read_excel(path, sheet_name=sheet_name, nrows=0).columns)
 
-    def read_dataframes(self, config: ProcessConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
-        # openpyxl 仅支持 .xlsx/.xlsm，旧版 .xls 直接给出明确提示
+    def read_dataframes(self, config: ProcessConfig) -> tuple[pd.DataFrame | None, pd.DataFrame]:
+        # openpyxl 仅支持 .xlsx/.xlsm，旧版 .xls 直接给出明确提示；期初余额表可选，留空则跳过
         for path in (config.balance_file, config.trans_file):
+            if not path:
+                continue
             suffix = Path(path).suffix.lower()
             if suffix not in {".xlsx", ".xlsm"}:
                 raise ValueError(f"不支持的文件格式: {suffix or path}，请另存为 .xlsx 后重试")
         read_options = {"engine": "openpyxl"}
         if supports_pyarrow_dtype_backend():
             read_options["dtype_backend"] = "pyarrow"
+        # 自动识别序时账中的科目列（一级科目/科目名称），用于过滤非往来科目
+        trans_columns = [config.col_name, config.col_debit, config.col_credit, config.col_date]
+        account_col = config.col_account or detect_account_column(
+            self.get_columns(config.trans_file, config.trans_sheet)
+        )
+        if account_col and account_col not in trans_columns:
+            trans_columns.append(account_col)
         try:
-            df_balance = pd.read_excel(config.balance_file, sheet_name=config.balance_sheet, **read_options)
+            df_balance = (
+                pd.read_excel(config.balance_file, sheet_name=config.balance_sheet, **read_options)
+                if config.balance_file
+                else None
+            )
             df_trans = pd.read_excel(
                 config.trans_file,
                 sheet_name=config.trans_sheet,
-                usecols=[config.col_name, config.col_debit, config.col_credit, config.col_date],
+                usecols=trans_columns,
                 **read_options,
             )
         except TypeError:
             fallback = {"engine": "openpyxl"}
-            df_balance = pd.read_excel(config.balance_file, sheet_name=config.balance_sheet, **fallback)
+            df_balance = (
+                pd.read_excel(config.balance_file, sheet_name=config.balance_sheet, **fallback)
+                if config.balance_file
+                else None
+            )
             df_trans = pd.read_excel(
                 config.trans_file,
                 sheet_name=config.trans_sheet,
-                usecols=[config.col_name, config.col_debit, config.col_credit, config.col_date],
+                usecols=trans_columns,
                 **fallback,
             )
         return df_balance, df_trans

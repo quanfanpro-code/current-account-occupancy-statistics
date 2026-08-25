@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .config import CURRENT_ACCOUNT_KEYWORDS, detect_account_column
 from .models import ProcessConfig
 from .precision import PrecisionEngine
 
@@ -9,36 +10,57 @@ from .precision import PrecisionEngine
 class FinancePipeline:
     def preprocess_data(
         self,
-        df_balance: pd.DataFrame,
+        df_balance: pd.DataFrame | None,
         df_trans: pd.DataFrame,
         config: ProcessConfig,
         progress_callback,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame | None, pd.DataFrame]:
         progress_callback(10, "开始数据预处理", "数据预处理阶段")
-        date_col_name = self._detect_balance_date_column(df_balance)
-        df_balance = df_balance.copy()
+
+        # 期初余额表可选：未提供时跳过余额表预处理，期初余额一律按 0 处理
+        if df_balance is not None:
+            date_col_name = self._detect_balance_date_column(df_balance)
+            df_balance = df_balance.copy()
+
+            # 去除余额表中的重复列名，只保留首次出现的列
+            df_balance = df_balance.loc[:, ~df_balance.columns.duplicated()]
+
+            df_balance[date_col_name] = pd.to_datetime(df_balance[date_col_name], errors="coerce").dt.normalize()
+            df_balance = df_balance.dropna(subset=[date_col_name]).sort_values(date_col_name).reset_index(drop=True)
+            if df_balance.empty:
+                raise ValueError(
+                    f"余额表的日期列「{date_col_name}」无法解析为有效日期，"
+                    "请确认该列是否为日期格式。"
+                )
+
+            balance_columns = [col for col in df_balance.columns if col != date_col_name]
+            if balance_columns:
+                # 使用 Decimal 精确舍入，与 to_integer_cents 保持一致，
+                # 避免浮点数 banker's rounding 陷阱（如 0.015 被 float round(2) 错误舍入为 0.01）
+                for col in balance_columns:
+                    df_balance[col] = PrecisionEngine.to_integer_cents(df_balance[col])
+
         df_trans = df_trans.copy()
-
-        # 去除余额表中的重复列名，只保留首次出现的列
-        df_balance = df_balance.loc[:, ~df_balance.columns.duplicated()]
-
-        df_balance[date_col_name] = pd.to_datetime(df_balance[date_col_name], errors="coerce").dt.normalize()
-        df_balance = df_balance.dropna(subset=[date_col_name]).sort_values(date_col_name).reset_index(drop=True)
-        if df_balance.empty:
-            raise ValueError(
-                f"余额表的日期列「{date_col_name}」无法解析为有效日期，"
-                "请确认该列是否为日期格式。"
-            )
-
-        balance_columns = [col for col in df_balance.columns if col != date_col_name]
-        if balance_columns:
-            # 使用 Decimal 精确舍入，与 to_integer_cents 保持一致，
-            # 避免浮点数 banker's rounding 陷阱（如 0.015 被 float round(2) 错误舍入为 0.01）
-            for col in balance_columns:
-                df_balance[col] = PrecisionEngine.to_integer_cents(df_balance[col])
-
         df_trans[config.col_name] = df_trans[config.col_name].astype(str).str.strip()
+        # 第一重筛选：必须有往来单位明细，单位为空的行直接丢弃
+        before = len(df_trans)
         df_trans = df_trans[~df_trans[config.col_name].isin(["", "nan", "None"])]
+        dropped_empty = before - len(df_trans)
+        if dropped_empty:
+            progress_callback(14, f"忽略无往来单位明细的记录 {dropped_empty} 条", "数据预处理阶段")
+        # 第二重筛选：自动识别科目列（优先一级科目），只保留八大往来科目。
+        # 去掉开头的科目编码（数字、点、空格）后，按前缀与关键字比对，
+        # 兼容“1122 应收账款”“应收账款\某公司”等写法
+        account_col = config.col_account or detect_account_column(df_trans.columns)
+        if account_col:
+            name_part = df_trans[account_col].astype(str).str.strip().str.replace(r"^[\d.\s]+", "", regex=True)
+            before = len(df_trans)
+            df_trans = df_trans[name_part.str.startswith(CURRENT_ACCOUNT_KEYWORDS)]
+            progress_callback(
+                15,
+                f"自动识别科目列「{account_col}」：保留往来科目 {len(df_trans)} 条，忽略非往来科目 {before - len(df_trans)} 条",
+                "数据预处理阶段",
+            )
         df_trans[config.col_debit] = PrecisionEngine.to_integer_cents(df_trans[config.col_debit])
         df_trans[config.col_credit] = PrecisionEngine.to_integer_cents(df_trans[config.col_credit])
         df_trans[config.col_date] = pd.to_datetime(df_trans[config.col_date], errors="coerce").dt.normalize()
@@ -48,15 +70,20 @@ class FinancePipeline:
 
     def calculate_balances(
         self,
-        df_balance: pd.DataFrame,
+        df_balance: pd.DataFrame | None,
         df_trans: pd.DataFrame,
         config: ProcessConfig,
         progress_callback,
     ) -> tuple[pd.DataFrame, list[str], list[str]]:
         progress_callback(25, "正在计算每日余额", "核心计算阶段")
-        date_col_name = self._detect_balance_date_column(df_balance)
-        supplier_columns = [col for col in df_balance.columns if col != date_col_name and str(col).strip() and not str(col).startswith("Unnamed")]
-        supplier_columns = list(dict.fromkeys(supplier_columns))
+        if df_balance is None:
+            # 未提供期初余额表：没有固定供应商列，日期范围完全由序时账决定
+            date_col_name = "日期"
+            supplier_columns = []
+        else:
+            date_col_name = self._detect_balance_date_column(df_balance)
+            supplier_columns = [col for col in df_balance.columns if col != date_col_name and str(col).strip() and not str(col).startswith("Unnamed")]
+            supplier_columns = list(dict.fromkeys(supplier_columns))
 
         all_trans_suppliers = list(dict.fromkeys(df_trans[config.col_name].tolist()))
         new_suppliers = [item for item in all_trans_suppliers if item not in supplier_columns]
@@ -67,10 +94,18 @@ class FinancePipeline:
         df_trans_filtered = df_trans[df_trans[config.col_name].isin(all_target_columns)].copy()
         df_trans_filtered["net_amount"] = df_trans_filtered[config.col_debit] - df_trans_filtered[config.col_credit]
 
-        # 余额表可能有多行，取第一行作为期初余额，结束日期取余额表最后一行或交易最大日期（取较晚者）
-        initial_date = df_balance[date_col_name].iloc[0]
-        balance_end_date = df_balance[date_col_name].iloc[-1]
-        initial_balances = df_balance.iloc[0][supplier_columns].fillna(0).astype("int64") if supplier_columns else pd.Series(dtype="int64")
+        if df_balance is None:
+            # 无余额表：期初余额全为 0，起始日取序时账第一笔日期，截止日取最后一笔日期
+            if df_trans_filtered.empty:
+                raise ValueError("未提供期初余额表，且序时账中没有有效记录，无法确定计算区间。")
+            initial_date = df_trans_filtered[config.col_date].min()
+            balance_end_date = df_trans_filtered[config.col_date].max()
+            initial_balances = pd.Series(dtype="int64")
+        else:
+            # 余额表可能有多行，取第一行作为期初余额，结束日期取余额表最后一行或交易最大日期（取较晚者）
+            initial_date = df_balance[date_col_name].iloc[0]
+            balance_end_date = df_balance[date_col_name].iloc[-1]
+            initial_balances = df_balance.iloc[0][supplier_columns].fillna(0).astype("int64") if supplier_columns else pd.Series(dtype="int64")
 
         if not df_trans_filtered.empty:
             pivot = df_trans_filtered.pivot_table(
